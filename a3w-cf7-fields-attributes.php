@@ -13,7 +13,7 @@
  * Requires at least: 5.0
  * Requires PHP: 7.2
  * 
- * Version: 1.0.0
+ * Version: 1.0.1
  */
 
 
@@ -21,7 +21,7 @@ if ( ! class_exists( 'A3W_CF7_Fields_Attributes' ) ) :
 
 class A3W_CF7_Fields_Attributes
 {
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
     const TEXTDOMAIN = 'a3w-cf7-fields-attributes';
     protected static $_plugin_uri;
     protected static $_plugin_path;
@@ -40,7 +40,7 @@ class A3W_CF7_Fields_Attributes
 
         add_action( 'wp_loaded', [ self::class, 'load_text_domain' ] );
 
-        add_filter( 'wpcf7_form_tag', [ self::class, 'add_custom_attributes' ] );
+        add_filter( 'wpcf7_form_elements', [ self::class, 'add_custom_attributes' ] );
 
         // URL Encoder for attributes in CF7 form page
         add_action( 'admin_enqueue_scripts', [ self::class, 'admin_enqueue_scripts' ] );
@@ -82,39 +82,50 @@ class A3W_CF7_Fields_Attributes
      * Add custom attributes on inputs
      * Put "data-my-attribute" to use it, with or without value
      * 
+     * Inspired by these contributions  
      * @see https://stackoverflow.com/a/68827506
      * @author Killian Leroux https://stackoverflow.com/users/1579452/killian-leroux
+     * 
+     * @see https://wordpress.org/support/topic/custom-data-attributes-for-individual-inputs/#post-14430388
+     * @author kkow https://wordpress.org/support/users/kkow/
      *
-     * @param array $tag
+     * @param string $content HTML content
      *
-     * @return array
+     * @return string HTML content
      */
-    public static function add_custom_attributes( $tag )
+    public static function add_custom_attributes( $content )
     {
-        $attributes = [];
+        $contact_form = WPCF7_FormTagsManager::get_instance();
+        $tags = $contact_form->get_scanned_tags();
 
-        foreach ((array) $tag['options'] as $option) {
-            if (strpos($option, 'attr_') === 0) {
-                $option = explode(':', $option, 2);
-                $option[0] = str_replace( 'attr_', '', $option[0] );
-                $option[1] = urldecode( $option[1] );
-                $attributes[$option[0]] = apply_filters('wpcf7_option_value', $option[1], $option[0]);
+        foreach ( $tags as $tag ) {
+
+            $attributes = [];
+
+            foreach ( (array) $tag['options'] as $option ) {
+                if ( strpos($option, 'attr_') === 0 ) {
+                    $option = explode(':', $option, 2);
+                    $option[0] = str_replace( 'attr_', '', $option[0] );
+
+                    $is_allowed = (bool) preg_match( '/^data-|title|aria-/', $option[0] );
+
+                    /**
+                     * @hook a3w_cf7_fields_attributes_allowed_names   
+                     * 
+                     * @param bool $is_allowed
+                     * @param string $attr_name name of attribute
+                     * @return bool true|false attribute's name is authorized or not
+                     */
+                    if ( apply_filters( 'a3w_cf7_fields_attributes_allowed_names', $is_allowed, $option[0] ) ) {
+                        $option[1] = urldecode( $option[1] );
+                        $attributes[ $option[0] ] = apply_filters( 'wpcf7_option_value', $option[1], $option[0] );
+                    }
+                }
             }
-        }
-
-        if ( empty( $attributes ) ) return $tag;
-
-        $id = $tag['name'];
     
-        if (array_key_exists('id', $attributes)) {
-            $id = $attributes['id'];
-        } else {
-            $tag['options'][] = "id:$id";
-        }
-
-        add_filter('wpcf7_form_elements', function ($content) use ($id, $attributes) {
+            if ( empty( $attributes ) ) continue; // no attribute => continue to next tag
+            
             $attributesHtml = '';
-            $idHtml = "id=\"$id\"";
 
             foreach ($attributes as $key => $value) {
                 $attributesHtml .= " $key";
@@ -124,10 +135,14 @@ class A3W_CF7_Fields_Attributes
                 }
             }
 
-            return str_replace($idHtml, "$idHtml $attributesHtml ", $content);
-        });
-    
-        return $tag;
+            if ( ! empty( $attributesHtml ) ) {
+                $nameHTML = 'name="' . $tag['name'] . '"';
+                $content = str_replace($nameHTML, "$nameHTML $attributesHtml ", $content);
+            }
+
+        }
+
+        return $content;
     }
 
 
